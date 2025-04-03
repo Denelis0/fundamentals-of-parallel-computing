@@ -2,82 +2,83 @@
 #include <vector>
 #include <chrono>
 #include <omp.h>
+#include <windows.h>
 
-using namespace std;
-using namespace chrono;
+const int SIZE = 100; // Размер матриц
+using MatrixType = std::vector<std::vector<int>>;
 
-const int SIZE = 100;
-const int BLOCK_SIZE = 32; // Размер блока для блочного умножения
-const int NUM_THREADS = 8;
-
-// Функция для создания матрицы, заполненной единицами
-vector<vector<int>> create_matrix(int size) {
-    return vector<vector<int>>(size, vector<int>(size, 1));
+// Функция для инициализации матрицы случайными числами
+void fillMatrixWithRandomValues(MatrixType& matrix) {
+    for (int row = 0; row < SIZE; ++row) {
+        for (int col = 0; col < SIZE; ++col) {
+            matrix[row][col] = rand() % 100;
+        }
+    }
 }
 
-// Блочное умножение матриц (однопоточное)
-vector<vector<int>> multiply_single_threaded(const vector<vector<int>>& A, const vector<vector<int>>& B) {
-    vector<vector<int>> C(SIZE, vector<int>(SIZE, 0));
-
-    for (int i = 0; i < SIZE; i += BLOCK_SIZE) {
-        for (int j = 0; j < SIZE; j += BLOCK_SIZE) {
-            for (int ii = i; ii < min(i + BLOCK_SIZE, SIZE); ++ii) {
-                for (int jj = j; jj < min(j + BLOCK_SIZE, SIZE); ++jj) {
-                    int sum = 0;
-                    for (int k = 0; k < SIZE; ++k) {
-                        sum += A[ii][k] * B[k][jj];
-                    }
-                    C[ii][jj] = sum;
-                }
+// Однопоточная функция для умножения матриц
+void multiplyWithoutParallelism(const MatrixType& mat1, const MatrixType& mat2, MatrixType& result) {
+    for (int row = 0; row < SIZE; ++row) {
+        for (int col = 0; col < SIZE; ++col) {
+            for (int k = 0; k < SIZE; ++k) {
+                result[row][col] += mat1[row][k] * mat2[k][col];
             }
         }
     }
-
-    return C;
 }
 
-// Блочное умножение с параллельным выполнением
-vector<vector<int>> multiply_parallel(const vector<vector<int>>& A, const vector<vector<int>>& B) {
-    vector<vector<int>> C(SIZE, vector<int>(SIZE, 0));
-
-    // Установка количества потоков OpenMP
-    omp_set_num_threads(NUM_THREADS);
-
-    // Параллельная обработка блоков
-#pragma omp parallel for collapse(2) schedule(dynamic)
-    for (int i = 0; i < SIZE; i += BLOCK_SIZE) {
-        for (int j = 0; j < SIZE; j += BLOCK_SIZE) {
-            for (int ii = i; ii < min(i + BLOCK_SIZE, SIZE); ++ii) {
-                for (int jj = j; jj < min(j + BLOCK_SIZE, SIZE); ++jj) {
-                    int sum = 0;
-                    for (int k = 0; k < SIZE; ++k) {
-                        sum += A[ii][k] * B[k][jj];
-                    }
-                    C[ii][jj] = sum;
-                }
+// Умножение матриц с OpenMP с использованием статического расписания
+void multiplyWithOmpStatic(const MatrixType& mat1, const MatrixType& mat2, MatrixType& result) {
+#pragma omp parallel for schedule(static)
+    for (int row = 0; row < SIZE; ++row) {
+        for (int col = 0; col < SIZE; ++col) {
+            for (int k = 0; k < SIZE; ++k) {
+                result[row][col] += mat1[row][k] * mat2[k][col];
             }
         }
     }
+}
 
-    return C;
+// Умножение матриц с OpenMP с использованием динамического расписания
+void multiplyWithOmpDynamic(const MatrixType& mat1, const MatrixType& mat2, MatrixType& result) {
+#pragma omp parallel for schedule(dynamic, 4)
+    for (int row = 0; row < SIZE; ++row) {
+        for (int col = 0; col < SIZE; ++col) {
+            for (int k = 0; k < SIZE; ++k) {
+                result[row][col] += mat1[row][k] * mat2[k][col];
+            }
+        }
+    }
 }
 
 int main() {
-    // Создание матриц
-    vector<vector<int>> A = create_matrix(SIZE);
-    vector<vector<int>> B = create_matrix(SIZE);
+    setlocale(LC_ALL, "RU");
+    SetConsoleOutputCP(65001);
+
+    MatrixType matrixA(SIZE, std::vector<int>(SIZE)), matrixB(SIZE, std::vector<int>(SIZE)), resultMatrix(SIZE, std::vector<int>(SIZE, 0));
+
+    fillMatrixWithRandomValues(matrixA);
+    fillMatrixWithRandomValues(matrixB);
 
     // Однопоточное умножение
-    auto start = high_resolution_clock::now();
-    auto C1 = multiply_single_threaded(A, B);
-    auto end = high_resolution_clock::now();
-    cout << "Single-threaded time: " << duration_cast<milliseconds>(end - start).count() << " ms" << endl;
+    auto startTime = std::chrono::high_resolution_clock::now();
+    multiplyWithoutParallelism(matrixA, matrixB, resultMatrix);
+    auto endTime = std::chrono::high_resolution_clock::now();
+    std::cout << "Однопоточное выполнение: " << std::chrono::duration<double>(endTime - startTime).count() << " секунд" << std::endl;
 
-    // Параллельное умножение
-    start = high_resolution_clock::now();
-    auto C2 = multiply_parallel(A, B);
-    end = high_resolution_clock::now();
-    cout << "Parallel time: " << duration_cast<milliseconds>(end - start).count() << " ms" << endl;
+    // Умножение с использованием статики
+    resultMatrix.assign(SIZE, std::vector<int>(SIZE, 0));
+    startTime = std::chrono::high_resolution_clock::now();
+    multiplyWithOmpStatic(matrixA, matrixB, resultMatrix);
+    endTime = std::chrono::high_resolution_clock::now();
+    std::cout << "OpenMP (статическое расписание): " << std::chrono::duration<double>(endTime - startTime).count() << " секунд" << std::endl;
+
+    // Умножение с использованием OpenMP динамики
+    resultMatrix.assign(SIZE, std::vector<int>(SIZE, 0));
+    startTime = std::chrono::high_resolution_clock::now();
+    multiplyWithOmpDynamic(matrixA, matrixB, resultMatrix);
+    endTime = std::chrono::high_resolution_clock::now();
+    std::cout << "OpenMP (динамическое расписание): " << std::chrono::duration<double>(endTime - startTime).count() << " секунд" << std::endl;
 
     return 0;
 }
